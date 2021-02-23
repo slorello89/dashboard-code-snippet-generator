@@ -1,26 +1,27 @@
 const https = require('https');
 const fs = require('fs');
-// const readline = require('readline');
 const yaml = require('js-yaml');
 const PRIMARY_BRANCH_NAME = 'master';
 
-async function getJsonFromCodeSnippet(keys_to_replace_client, keys_to_replace_code){
+async function getJsonFromCodeSnippet(snippet_config_url, language, keys_to_replace_client, keys_to_replace_code){
     return new Promise(resolve=>{
 
-        const file = fs.createWriteStream('./out/code-snippet.yaml')    
-        const request = https.get('https://raw.githubusercontent.com/Nexmo/nexmo-developer/main/_examples/voice/make-an-outbound-call-with-ncco/csharp.yml', function(response){    
+        const file = fs.createWriteStream('./out/code-snippet.yaml', {flags: 'w'})    
+        const request = https.get(snippet_config_url, function(response){
         response.pipe(file);
         file.on('finish', async function(){
             file.close();
-
             let fileContents = fs.readFileSync('./out/code-snippet.yaml');
+            console.log(`processing ${snippet_config_url}`);            
             let data = yaml.load(fileContents);
-            let obj = {};
-            let top_level_syntax = "Bash"
+            if(!data.language)
+                data.language=language;
+            console.log(`language: ${data.language}`)
+            let obj = {};            
+            obj.syntax = "Bash";
             obj.sections = [];
             if(data.language == 'dotnet'){
-                obj.syntax='Csharp';
-                top_level_syntax = 'Csharp'
+                obj.syntax='Csharp';                
                 obj.sections.push(
                     {
                         "header":"Install the library",
@@ -30,54 +31,88 @@ async function getJsonFromCodeSnippet(keys_to_replace_client, keys_to_replace_co
                     });
             }
             else if(data.language == 'curl'){
-                obj.syntax='bash';
+                obj.syntax='bash';                
             }
             else if(data.language == 'java'){
                 obj.syntax='java';
-                top_level_syntax = 'java'
+                obj.sections.push(
+                    {
+                        "header":"Install the library",
+                        "code":"compile 'com.vonage:client:[6.1.0,7.0.0)'",
+                        "keysToReplace":[],
+                        "syntax":"Bash"
+                    });
             }
             else if(data.language == 'node'){
                 obj.syntax='javascript';
-                top_level_syntax = 'node'
+                obj.sections.push(
+                    {
+                        "header":"Install the library",
+                        "code":"npm install @vonage/server-sdk",
+                        "keysToReplace":[],
+                        "syntax":"Bash"
+                    });
             }
             else if(data.language == 'ruby'){
                 obj.syntax='Ruby';
-                top_level_syntax = 'Ruby'
+                obj.sections.push(
+                    {
+                        "header":"Install the library",
+                        "code":"gem install vonage",
+                        "keysToReplace":[],
+                        "syntax":"Bash"
+                    });
             }
             else if(data.language == 'python'){
                 obj.syntax='Python';
-                top_level_syntax = 'Python'
+                obj.sections.push(
+                    {
+                        "header":"Install the library",
+                        "code":"pip install vonage",
+                        "keysToReplace":[],
+                        "syntax":"Bash"
+                    });
             }
             else if(data.language == 'php'){
                 obj.syntax='PHP';
-                top_level_syntax = 'PHP'
+                obj.sections.push(
+                    {
+                        "header":"Install the library",
+                        "code":"composer require vonage/client",
+                        "keysToReplace":[],
+                        "syntax":"Bash"
+                    });
             }
             if (data.import_dependencies){
                 let lines = await getLinesFromGithubFile(data.import_dependencies.source, data.import_dependencies.from_line, data.import_dependencies.to_line);
-                import_section = {"header" : "Import Dependencies", "code" : lines, "keys_to_replace":[]}                
-                sections.append(import_section);
+                import_section = {"header" : "Import Dependencies", "code" : lines, "keysToReplace":[]}                
+                obj.sections.push(import_section);
             }
             if (data.client){
                 let lines = await getLinesFromGithubFile(data.client.source, data.client.from_line, data.client.to_line);
                 init_section = {
                     "header":"Initialize the Library",
                     "code":lines,
-                    "keys_to_replace":keys_to_replace_client
+                    "keysToReplace":keys_to_replace_client
                 }
-                sections.append(init_section)
+                obj.sections.push(init_section)
             }
             if(data.code){
                 let lines = await getLinesFromGithubFile(data.code.source, data.code.from_line, data.code.to_line);
                 code_section = {
                     "header":"Write the code",
                     "code":lines,
-                    "keys_to_replace":keys_to_replace_code
+                    "keysToReplace":keys_to_replace_code
                 };
+                obj.sections.push(code_section);
             }
+            resolve(obj)
         });
     });
 });    
 }
+
+
 
 async function getLinesFromGithubFile(pathToFile, fromLine, toLine){
     return new Promise(resolve=>{
@@ -90,21 +125,76 @@ async function getLinesFromGithubFile(pathToFile, fromLine, toLine){
             response.pipe(stream)
             stream.on("finish",()=>{
                 stream.close();
-                var f = fs.readFileSync('./out/.tmp', 'utf8');            
-                var lines = f.split("\n").slice(fromLine-1,toLine-1);
+                var f = fs.readFileSync('./out/.tmp', 'utf8');
+                var lines = f.split("\n").slice(fromLine-1,toLine);
+                if(toLine==fromLine){
+                    lines = [f.split("\n")[fromLine-1]];                
+                }
+                
                 var ret = '';
                 lines.forEach((element, index, theArray)=>{
-                    ret += element.trim()+' \\n ';
+                    ret += element.trim()+'\n ';
                 });
-                resolve(ret)
+                resolve(ret.substring(0,ret.length-3))
             });
         });
     });
         
 }
 
-let d = getJsonFromCodeSnippet((yml)=>{
-    // console.log(yml);
-});
+async function getSnippets(snippetPath, clientKeys, codeKeys){
+    let languages = ['csharp', 'curl','java','node','php','python','ruby']
+    var output = {};    
+    for (const language of languages){        
+        the_url = `https://raw.githubusercontent.com/Nexmo/nexmo-developer/main/_examples/${snippetPath}/${language}.yml`
+        await getJsonFromCodeSnippet(the_url, language,clientKeys, codeKeys).then(async x=>{
+            output[language] = x;            
+        })
+    }
+    // let outFile = fs.createWriteStream('./examples.json', {flags: 'w'})    
+    // outFile.write(JSON.stringify(output));    
+    return output;
+}
 
+async function buildSnippetJSON(){
+    let snippet_file_object = {};
+    snippets = [['voice','voice/make-an-outbound-call-with-ncco', ['VONAGE_PRIVATE_KEY_PATH', 'VONAGE_APPLICATION_ID'], ['TO_NUMBER','VONAGE_NUMBER']],['numberInsight','number-insight/advanced',['VONAGE_API_KEY', 'VONAGE_API_SECRET'], ['INSIGHT_NUMBER']],['sms','messaging/sms/send-an-sms',['VONAGE_API_KEY','VONAGE_API_SECRET'],['TO_NUMBER','VONAGE_BRAND_NAME']]]
 
+    for(const snippet of snippets){
+        snippets_for_all_languages = await getSnippets(snippet[1], snippet[2],snippet[3]);
+        snippet_file_object[snippet[0]] =  snippets_for_all_languages;
+    }
+    let outFile = fs.createWriteStream('./examples.json', {flags: 'w'})
+    outFile.write(JSON.stringify(snippet_file_object, null, '\t'));
+}
+
+async function getSnippetForVerify(language){
+    let languages = ['csharp', 'curl','java','node','php','python','ruby']
+    let verify_snippet_object = {}
+    for (language of languages){
+        let the_url = `https://raw.githubusercontent.com/Nexmo/nexmo-developer/main/_examples/verify/send-verification-request/${language}.yml`
+        await getJsonFromCodeSnippet(the_url,language,['VONAGE_API_KEY', 'VONAGE_API_SECRET'], ['RECIPIENT_NUMBER','BRAND_NAME']).then(async (x)=>{
+            x.sections[x.sections.length-1].header = "Make a verification request"
+            verify_snippet_object[language]=x
+        });
+        the_url = `https://raw.githubusercontent.com/Nexmo/nexmo-developer/main/_examples/verify/check-verification-request/${language}.yml`
+        await getJsonFromCodeSnippet(the_url,language,[],[]).then(async (x)=>{
+            x.sections[x.sections.length-1].header = "Check the request with a code"
+            verify_snippet_object[language]['sections'].push(x['sections'][x['sections'].length-1]);
+        });
+        the_url = `https://raw.githubusercontent.com/Nexmo/nexmo-developer/main/_examples/verify/cancel-verification-request/${language}.yml`
+        await getJsonFromCodeSnippet(the_url,language,[],[]).then(async (x)=>{
+            x.sections[x.sections.length-1].header = "Cancel The Request"
+            verify_snippet_object[language]['sections'].push(x['sections'][x['sections'].length-1]);
+        });
+    }
+    let outFile = fs.createWriteStream('./examples-verify.json', {flags: 'w'})
+    outFile.write(JSON.stringify(verify_snippet_object, null, '\t'));
+
+}
+async function start(){
+    await getSnippetForVerify();
+    await buildSnippetJSON();
+}
+
+start();
